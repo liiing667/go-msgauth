@@ -172,7 +172,7 @@ func NewSigner(options *SignOptions) (*Signer, error) {
 
 		// Read header
 		br := bufio.NewReader(pr)
-		h, err := readHeader(br)
+		h, err := readHeader(br, 0, 0)
 		if err != nil {
 			closeReadWithError(err)
 			return

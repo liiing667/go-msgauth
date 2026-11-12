@@ -59,6 +59,19 @@ func isFail(err error) bool {
 // maximum number of signatures.
 var ErrTooManySignatures = errors.New("dkim: too many signatures")
 
+// ErrHeaderTooLarge is returned by Verify when the message header exceeds the
+// maximum header size configured in VerifyOptions.MaxHeaderSize.
+var ErrHeaderTooLarge = errors.New("dkim: header too large")
+
+// ErrTooManyHeaderFields is returned by Verify when the message header
+// contains more fields than allowed by VerifyOptions.MaxHeaderFields.
+var ErrTooManyHeaderFields = errors.New("dkim: too many header fields")
+
+// ErrMessageTooLarge is returned by Verify when the message exceeds the
+// maximum number of bytes read from the input configured in
+// VerifyOptions.MaxMessageSize.
+var ErrMessageTooLarge = errors.New("dkim: message too large")
+
 var requiredTags = []string{"v", "a", "b", "bh", "d", "h", "s"}
 
 // A Verification is produced by Verify when it checks if one signature is
@@ -99,6 +112,23 @@ type VerifyOptions struct {
 	// signatures are verified, the rest are ignored and ErrTooManySignatures
 	// is returned. If zero, there is no maximum.
 	MaxVerifications int
+	// MaxHeaderSize is the maximum size in bytes of the message header,
+	// including folded header fields and their CRLF line terminators. If the
+	// header is larger, ErrHeaderTooLarge is returned. If zero, there is no
+	// maximum.
+	MaxHeaderSize int64
+	// MaxHeaderFields is the maximum number of header fields in the message
+	// header. Continuation lines don't count as separate fields. If the header
+	// contains more fields, ErrTooManyHeaderFields is returned. If zero, there
+	// is no maximum.
+	MaxHeaderFields int
+	// MaxMessageSize is the maximum number of bytes read from the input
+	// message, including both the header and the body. If the message is
+	// larger, ErrMessageTooLarge is returned. The limit is applied to the
+	// input stream, so it bounds the total data processed even when several
+	// signatures fan out body verification in parallel. If zero, there is no
+	// maximum.
+	MaxMessageSize int64
 }
 
 // Verify checks if a message's signatures are valid. It returns one
@@ -112,9 +142,19 @@ func Verify(r io.Reader) ([]*Verification, error) {
 // VerifyWithOptions performs the same task as Verify, but allows specifying
 // verification options.
 func VerifyWithOptions(r io.Reader, options *VerifyOptions) ([]*Verification, error) {
+	var maxHeaderSize int64
+	var maxHeaderFields int
+	if options != nil {
+		maxHeaderSize = options.MaxHeaderSize
+		maxHeaderFields = options.MaxHeaderFields
+		if options.MaxMessageSize > 0 {
+			r = &sizeLimitedReader{R: r, N: options.MaxMessageSize}
+		}
+	}
+
 	// Read header
 	bufr := bufio.NewReader(r)
-	h, err := readHeader(bufr)
+	h, err := readHeader(bufr, maxHeaderSize, maxHeaderFields)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +227,11 @@ func parallelVerify(r io.Reader, h header, signatures []*signature, options *Ver
 	}
 
 	if _, err := io.Copy(io.MultiWriter(writers...), r); err != nil {
+		// Close the pipes with the error so that the verification goroutines
+		// don't block waiting for more body data (which would leak goroutines).
+		for _, wr := range pipeWriters {
+			wr.CloseWithError(err)
+		}
 		return nil, err
 	}
 	for _, wr := range pipeWriters {
@@ -207,6 +252,34 @@ func parallelVerify(r io.Reader, h header, signatures []*signature, options *Ver
 		}
 	}
 	return verifications, nil
+}
+
+// sizeLimitedReader reads at most N bytes from R. A message of exactly N
+// bytes ending in EOF is accepted; any byte read beyond N returns
+// ErrMessageTooLarge.
+type sizeLimitedReader struct {
+	R io.Reader
+	N int64
+}
+
+func (r *sizeLimitedReader) Read(p []byte) (int, error) {
+	if r.N <= 0 {
+		// The budget is exhausted: probe the underlying reader so that a
+		// message ending exactly at the limit still reports EOF cleanly.
+		_, err := r.R.Read(p)
+		if err != nil {
+			return 0, err
+		}
+		return 0, ErrMessageTooLarge
+	}
+
+	if int64(len(p)) > r.N {
+		p = p[:r.N]
+	}
+
+	n, err := r.R.Read(p)
+	r.N -= int64(n)
+	return n, err
 }
 
 func verify(h header, r io.Reader, sigField, sigValue string, options *VerifyOptions) (*Verification, error) {

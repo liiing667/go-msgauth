@@ -15,19 +15,38 @@ const crlf = "\r\n"
 
 type header []string
 
-func readHeader(r *bufio.Reader) (header, error) {
+// readHeader reads a message header. If maxSize or maxFields is greater than
+// zero and the header exceeds the corresponding limit, the sentinel error
+// ErrHeaderTooLarge or ErrTooManyHeaderFields is returned. A zero limit
+// disables the check.
+func readHeader(r *bufio.Reader, maxSize int64, maxFields int) (header, error) {
 	tr := textproto.NewReader(r)
 
-	var h header
+	var (
+		h    header
+		size int64
+	)
 	for {
 		l, err := tr.ReadLine()
 		if err != nil {
-			return h, fmt.Errorf("failed to read header: %v", err)
+			return h, fmt.Errorf("failed to read header: %w", err)
 		}
 
 		if len(l) == 0 {
 			break
-		} else if len(h) > 0 && (l[0] == ' ' || l[0] == '\t') {
+		}
+
+		isContinuation := len(h) > 0 && (l[0] == ' ' || l[0] == '\t')
+		if !isContinuation && maxFields > 0 && len(h) >= maxFields {
+			return h, ErrTooManyHeaderFields
+		}
+
+		size += int64(len(l)) + int64(len(crlf))
+		if maxSize > 0 && size > maxSize {
+			return h, ErrHeaderTooLarge
+		}
+
+		if isContinuation {
 			// This is a continuation line
 			h[len(h)-1] += l + crlf
 		} else {

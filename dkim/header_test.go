@@ -29,7 +29,7 @@ var headerTests = []struct {
 func TestReadHeader(t *testing.T) {
 	for _, test := range headerTests {
 		r := strings.NewReader(test.s)
-		h, err := readHeader(bufio.NewReader(r))
+		h, err := readHeader(bufio.NewReader(r), 0, 0)
 		if err != nil {
 			t.Fatalf("Expected no error while reading error, got: %v", err)
 		}
@@ -42,7 +42,7 @@ func TestReadHeader(t *testing.T) {
 
 func TestReadHeader_incomplete(t *testing.T) {
 	r := strings.NewReader("From: <mistuha@kiminonawa.moe>\r\nTo")
-	_, err := readHeader(bufio.NewReader(r))
+	_, err := readHeader(bufio.NewReader(r), 0, 0)
 	if err == nil {
 		t.Error("Expected an error while reading incomplete header")
 	}
