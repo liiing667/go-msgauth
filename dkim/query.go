@@ -74,7 +74,12 @@ func queryDNSTXT(domain, selector string, txtLookup txtLookupFunc) (*queryResult
 		txtLookup = net.LookupTXT
 	}
 
-	txts, err := txtLookup(selector + "._domainkey." + domain)
+	queryName, err := dnsQueryName(domain, selector)
+	if err != nil {
+		return nil, permFailError("invalid signing identity: " + err.Error())
+	}
+
+	txts, err := txtLookup(queryName)
 	if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
 		return nil, tempFailError("key unavailable: " + err.Error())
 	} else if err != nil {

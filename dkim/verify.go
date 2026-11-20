@@ -221,7 +221,15 @@ func verify(h header, r io.Reader, sigField, sigValue string, options *VerifyOpt
 		return verif, permFailError("incompatible signature version")
 	}
 
-	verif.Domain = stripWhitespace(params["d"])
+	rawDomain := params["d"]
+	if hasInnerWhitespace(rawDomain) {
+		return verif, permFailError("invalid domain (d= tag): whitespace is not allowed")
+	}
+	verif.Domain = stripWhitespace(rawDomain)
+	normalizedDomain, err := parseDomain(verif.Domain)
+	if err != nil {
+		return verif, permFailError("invalid domain (d= tag): " + err.Error())
+	}
 
 	for _, tag := range requiredTags {
 		if _, ok := params[tag]; !ok {
@@ -232,8 +240,7 @@ func verify(h header, r io.Reader, sigField, sigValue string, options *VerifyOpt
 	if i, ok := params["i"]; ok {
 		verif.Identifier = stripWhitespace(i)
 		ident := strings.ToLower(verif.Identifier)
-		domain := strings.ToLower(verif.Domain)
-		if !strings.HasSuffix(ident, "@"+domain) && !strings.HasSuffix(ident, "."+domain) {
+		if !strings.HasSuffix(ident, "@"+normalizedDomain) && !strings.HasSuffix(ident, "."+normalizedDomain) {
 			return verif, permFailError("domain mismatch")
 		}
 	} else {
@@ -277,13 +284,21 @@ func verify(h header, r io.Reader, sigField, sigValue string, options *VerifyOpt
 	if methodsStr, ok := params["q"]; ok {
 		methods = parseTagList(methodsStr)
 	}
+	rawSelector := params["s"]
+	if hasInnerWhitespace(rawSelector) {
+		return verif, permFailError("invalid selector (s= tag): whitespace is not allowed")
+	}
+	normalizedSelector, err := parseSelector(stripWhitespace(rawSelector))
+	if err != nil {
+		return verif, permFailError("invalid selector (s= tag): " + err.Error())
+	}
 	var res *queryResult
 	for _, method := range methods {
 		if query, ok := queryMethods[QueryMethod(method)]; ok {
 			if options != nil {
-				res, err = query(verif.Domain, stripWhitespace(params["s"]), options.LookupTXT)
+				res, err = query(normalizedDomain, normalizedSelector, options.LookupTXT)
 			} else {
-				res, err = query(verif.Domain, stripWhitespace(params["s"]), nil)
+				res, err = query(normalizedDomain, normalizedSelector, nil)
 			}
 			break
 		}
