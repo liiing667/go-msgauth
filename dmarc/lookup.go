@@ -174,10 +174,14 @@ func parseParams(s string) (map[string]string, error) {
 			if strings.TrimSpace(s) == "" {
 				continue
 			}
-			return params, errors.New("dmarc: malformed params")
+			return nil, errors.New("dmarc: malformed params")
 		}
 
-		params[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+		key := strings.TrimSpace(kv[0])
+		if _, ok := params[key]; ok {
+			return nil, fmt.Errorf("dmarc: duplicate parameter '%v'", key)
+		}
+		params[key] = strings.TrimSpace(kv[1])
 	}
 	return params, nil
 }
