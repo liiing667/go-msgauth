@@ -71,6 +71,17 @@ func parseHeaderField(s string) (string, string) {
 	return strings.TrimSpace(key), strings.TrimSpace(value)
 }
 
+// countFields returns the number of instances of each header field, keyed by
+// lowercase field name.
+func (h header) countFields() map[string]int {
+	counts := make(map[string]int)
+	for _, kv := range h {
+		k, _ := parseHeaderField(kv)
+		counts[strings.ToLower(k)]++
+	}
+	return counts
+}
+
 func parseHeaderParams(s string) (map[string]string, error) {
 	pairs := strings.Split(s, ";")
 	params := make(map[string]string)

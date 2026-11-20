@@ -1,6 +1,7 @@
 package dkim
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net"
@@ -292,5 +293,74 @@ func TestVerify_tooManySignatures(t *testing.T) {
 	}
 	if len(verifs) != options.MaxVerifications {
 		t.Fatalf("Expected %v verifications, got %v", options.MaxVerifications, len(verifs))
+	}
+}
+
+const duplicateFromMailString = "From: Joe SixPack <joe@football.example.com>\r\n" +
+	"From: Mallory <mallory@example.net>\r\n" +
+	"To: Suzie Q <suzie@shopping.example.net>\r\n" +
+	"Subject: Is dinner ready?\r\n" +
+	"Date: Fri, 11 Jul 2003 21:00:37 -0700 (PDT)\r\n" +
+	"Message-ID: <20030712040037.46341.5F8J@football.example.com>\r\n" +
+	"\r\n" +
+	mailBodyString
+
+func TestVerify_headerInstances(t *testing.T) {
+	signMail := func(mail string, headerKeys []string) string {
+		options := &SignOptions{
+			Domain:     "example.org",
+			Selector:   "brisbane",
+			Signer:     testPrivateKey,
+			HeaderKeys: headerKeys,
+		}
+		var b bytes.Buffer
+		if err := Sign(&b, strings.NewReader(mail), options); err != nil {
+			t.Fatalf("Expected no error while signing mail, got: %v", err)
+		}
+		return b.String()
+	}
+
+	headerKeys := []string{"From", "To", "Subject", "Date", "Message-ID"}
+
+	signed := signMail(mailString, headerKeys)
+	sigField := strings.TrimSuffix(signed, mailString)
+
+	// An attacker prepends header fields not covered by the signature.
+	injectedFrom := sigField + "From: Mallory <mallory@example.net>\r\n" + mailString
+	injectedSubject := sigField + "Subject: Your account has been compromised\r\n" + mailString
+
+	// Both From instances are listed in h=, so the signature covers them
+	// all, but a duplicate From is still forbidden.
+	duplicateFromKeys := []string{"From", "From", "To", "Subject", "Date", "Message-ID"}
+	duplicateFrom := signMail(duplicateFromMailString, duplicateFromKeys)
+
+	tests := []struct {
+		name    string
+		mail    string
+		wantErr bool
+	}{
+		{"single header", signed, false},
+		{"injected From", injectedFrom, true},
+		{"injected Subject", injectedSubject, true},
+		{"duplicate From", duplicateFrom, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			verifications, err := Verify(strings.NewReader(test.mail))
+			if err != nil {
+				t.Fatalf("Expected no error while verifying signature, got: %v", err)
+			}
+			if len(verifications) != 1 {
+				t.Fatalf("Expected exactly one verification, got %v", len(verifications))
+			}
+			err = verifications[0].Err
+			if test.wantErr {
+				if !IsPermFail(err) {
+					t.Errorf("Expected permfail while verifying signature, got: %v", err)
+				}
+			} else if err != nil {
+				t.Errorf("Expected no error while verifying signature, got: %v", err)
+			}
+		})
 	}
 }

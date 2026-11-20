@@ -253,6 +253,34 @@ func verify(h header, r io.Reader, sigField, sigValue string, options *VerifyOpt
 	}
 	verif.HeaderKeys = headerKeys
 
+	// RFC 5322 section 3.6 allows at most one From field, and receivers
+	// disagree on which instance to display: fail closed on duplicates.
+	fieldCounts := h.countFields()
+	if fieldCounts["from"] > 1 {
+		return verif, permFailError("multiple From header fields")
+	}
+
+	// Check that the signature covers all instances of each signed header
+	// field. Otherwise an attacker could prepend an extra instance of a
+	// security-relevant field (e.g. From or Subject) which isn't covered
+	// by the signature, and downstream agents would read different
+	// identities from the same message.
+	signedCounts := make(map[string]int)
+	for _, k := range headerKeys {
+		signedCounts[strings.ToLower(k)]++
+	}
+	checked := make(map[string]bool)
+	for _, k := range headerKeys {
+		k = strings.ToLower(k)
+		if checked[k] || k == strings.ToLower(headerFieldName) {
+			continue
+		}
+		checked[k] = true
+		if fieldCounts[k] > signedCounts[k] {
+			return verif, permFailError(fmt.Sprintf("header field %q has more instances than covered by the signature", k))
+		}
+	}
+
 	if timeStr, ok := params["t"]; ok {
 		t, err := parseTime(timeStr)
 		if err != nil {
